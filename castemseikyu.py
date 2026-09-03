@@ -79,32 +79,43 @@ st.title("🏢 期間請求書 ＆ 📦 仕入れ台帳 ＆ ⚠️ 未納管理�
 
 
 # --------------------------------------------------
-# 2. 日本語フォント登録処理
+# 2. 日本語フォント登録処理（エラー完全対策版）
 # --------------------------------------------------
 def setup_japanese_font():
-    win_font = os.path.join(
-        os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "msgothic.ttc"
-    )
-    if os.path.exists(win_font):
+    # 1. Windows標準フォントを優先探索
+    win_fonts = [
+        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "msgothic.ttc"),
+        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "meiryo.ttc"),
+        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "YuGothM.ttc"),
+    ]
+    for font_path in win_fonts:
+        if os.path.exists(font_path):
+            try:
+                pdfmetrics.registerFont(TTFont("JPFont", font_path))
+                return "JPFont"
+            except Exception:
+                pass
+
+    # 2. ローカルにあるフォントファイルの確認
+    local_font_path = "NotoSansJP-Regular.ttf"
+    if os.path.exists(local_font_path):
         try:
-            pdfmetrics.registerFont(TTFont("JPFont", win_font))
+            pdfmetrics.registerFont(TTFont("JPFont", local_font_path))
             return "JPFont"
         except Exception:
             pass
 
-    local_font_path = "NotoSansJP-Regular.ttf"
-    if not os.path.exists(local_font_path):
-        font_url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansJP/NotoSansJP-Regular.ttf"
-        try:
-            urllib.request.urlretrieve(font_url, local_font_path)
-        except Exception as e:
-            st.error(f"フォントのロードに失敗しました: {e}")
-            return "Helvetica"
+    # 3. 安定したリポジトリからのフォントダウンロード試行（失敗しても絶対に止めない）
+    font_url = "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP-Regular.ttf"
+    try:
+        urllib.request.urlretrieve(font_url, local_font_path)
+        if os.path.exists(local_font_path):
+            pdfmetrics.registerFont(TTFont("JPFont", local_font_path))
+            return "JPFont"
+    except Exception:
+        pass
 
-    if os.path.exists(local_font_path):
-        pdfmetrics.registerFont(TTFont("JPFont", local_font_path))
-        return "JPFont"
-
+    # 4. すべてダメな場合は標準フォント（Helvetica）にフォールバックしてクラッシュを防ぐ
     return "Helvetica"
 
 
