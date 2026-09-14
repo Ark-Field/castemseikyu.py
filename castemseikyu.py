@@ -22,10 +22,10 @@ APP_PRESETS = {
         "f_customer": "field-3",
         "f_date": "field-17_12",      # 納品日
         "f_order_date": "field-2",    # 受注日
-        "f_order_no": "field-10",     # 注文番号
-        "f_drawing": "field-17_2",    # 部番
+        "f_order_no": "field-9",      # 図面番号（旧: 注文番号 field-10）
+        "f_drawing": "field-17_2",    # 部番（5桁ゼロ埋め対象）
         "f_item_name": "field-6",     # 品名
-        "f_material": "",
+        "f_material": "field-7",      # 材質
         "f_qty": "field-17_11",       # 納品数量
         "f_order_qty": "field-17_8",  # 受注数量
         "f_price": "field-17_13",     # 販売単価
@@ -194,7 +194,7 @@ def fetch_pocket_records(api_key, app_id, start_date=None, end_date=None, preset
 
 
 # --------------------------------------------------
-# 汎用フィールド値抽出ヘルパー
+# 汎用フィールド値抽出ヘルパー ＆ 5桁ゼロ埋めフォーマッター
 # --------------------------------------------------
 def extract_val(raw_val):
     if raw_val is None:
@@ -215,11 +215,22 @@ def extract_val(raw_val):
             return ""
         return val_str
 
+def format_drawing_no(val):
+    """部番を5桁のゼロ埋め表記（例: 00123）にする"""
+    s = extract_val(val)
+    if not s:
+        return ""
+    # 数字のみ抽出して5桁ゼロ埋めを試みる、数字以外が含まれる場合はそのまま返すか調整
+    cleaned = "".join([c for c in s if c.isdigit()])
+    if cleaned and len(cleaned) <= 5:
+        return cleaned.zfill(5)
+    return s
+
 
 # --------------------------------------------------
 # 5. 集計関数（請求用）
 # --------------------------------------------------
-def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
+def filter_and_group_by_customer_pocket(records, start_date, end_date, preset, app_id_val=None):
     parsed_list = []
 
     f_cust = preset["f_customer"]
@@ -240,7 +251,7 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
             continue
 
         parent_order_no = extract_val(inner.get(f_ord, "")) if f_ord else ""
-        parent_drawing = extract_val(inner.get(f_drawing, "")) if f_drawing else ""
+        parent_drawing = format_drawing_no(inner.get(f_drawing, "")) if f_drawing else ""
         parent_material = extract_val(inner.get(f_material, "")) if f_material else ""
         parent_item_name = extract_val(inner.get(f_item_name, "")) if f_item_name else ""
 
@@ -283,14 +294,18 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
                     amount = qty * price
 
                     ord_no = get_sub_val(f_ord) if f_ord and get_sub_val(f_ord) else parent_order_no
-                    drawing_val = get_sub_val(f_drawing) if f_drawing and get_sub_val(f_drawing) else parent_drawing
+                    
+                    # 鋳物販売管理(app36)の場合は部番を5桁ゼロ埋め
+                    raw_dwg = get_sub_val(f_drawing) if f_drawing and get_sub_val(f_drawing) else parent_drawing
+                    drawing_val = format_drawing_no(raw_dwg) if preset.get("app_id") == 36 else extract_val(raw_dwg)
+
                     mat_val = get_sub_val(f_material) if f_material and get_sub_val(f_material) else parent_material
                     item_val = get_sub_val(f_item_name) if f_item_name and get_sub_val(f_item_name) else parent_item_name
 
                     parsed_list.append({
                         "顧客名": customer,
                         "納品日": delivery_date.strftime("%Y/%m/%d"),
-                        "図番": drawing_val,
+                        "部番": drawing_val,
                         "品名": item_val,
                         "材質": mat_val,
                         "注文番号": ord_no,
@@ -322,10 +337,13 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
                 price = safe_float(inner.get(f_p, 0))
                 amount = qty * price
 
+                raw_dwg_parent = inner.get(f_drawing, "")
+                drawing_val = format_drawing_no(raw_dwg_parent) if preset.get("app_id") == 36 else extract_val(raw_dwg_parent)
+
                 parsed_list.append({
                     "顧客名": customer,
                     "納品日": delivery_date.strftime("%Y/%m/%d"),
-                    "図番": parent_drawing,
+                    "部番": drawing_val,
                     "品名": parent_item_name,
                     "材質": parent_material,
                     "注文番号": parent_order_no,
@@ -381,7 +399,7 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
             continue
 
         parent_order_no = extract_val(inner.get(f_ord, "")) if f_ord else ""
-        parent_drawing = extract_val(inner.get(f_drawing, "")) if f_drawing else ""
+        parent_drawing = format_drawing_no(inner.get(f_drawing, "")) if f_drawing else ""
         parent_material = extract_val(inner.get(f_material, "")) if f_material else ""
         parent_item_name = extract_val(inner.get(f_item_name, "")) if f_item_name else ""
 
@@ -424,17 +442,20 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
                     cost_amount = qty * cost_price
 
                     ord_no = get_sub_val(f_ord) if f_ord and get_sub_val(f_ord) else parent_order_no
-                    drawing_val = get_sub_val(f_drawing) if f_drawing and get_sub_val(f_drawing) else parent_drawing
+                    
+                    raw_dwg = get_sub_val(f_drawing) if f_drawing and get_sub_val(f_drawing) else parent_drawing
+                    drawing_val = format_drawing_no(raw_dwg) if preset.get("app_id") == 36 else extract_val(raw_dwg)
+
                     mat_val = get_sub_val(f_material) if f_material and get_sub_val(f_material) else parent_material
                     item_val = get_sub_val(f_item_name) if f_item_name and get_sub_val(f_item_name) else parent_item_name
 
                     parsed_list.append({
                         "仕入れ先": supplier,
                         "納品日": delivery_date.strftime("%Y/%m/%d"),
-                        "注文番号": ord_no,
-                        "図番": drawing_val,
+                        "部番": drawing_val,
                         "品名": item_val,
                         "材質": mat_val,
+                        "注文番号": ord_no,
                         "数量": qty,
                         "仕入単価": cost_price,
                         "仕入金額": cost_amount,
@@ -463,13 +484,16 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
                 cost_price = safe_float(inner.get(f_cost, 0))
                 cost_amount = qty * cost_price
 
+                raw_dwg_parent = inner.get(f_drawing, "")
+                drawing_val = format_drawing_no(raw_dwg_parent) if preset.get("app_id") == 36 else extract_val(raw_dwg_parent)
+
                 parsed_list.append({
                     "仕入れ先": supplier,
                     "納品日": delivery_date.strftime("%Y/%m/%d"),
-                    "注文番号": parent_order_no,
-                    "図番": parent_drawing,
+                    "部番": drawing_val,
                     "品名": parent_item_name,
                     "材質": parent_material,
+                    "注文番号": parent_order_no,
                     "数量": qty,
                     "仕入単価": cost_price,
                     "仕入金額": cost_amount,
@@ -506,6 +530,7 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
     f_ord = preset["f_order_no"]
     f_drawing = preset["f_drawing"]
     f_item_name = preset["f_item_name"]
+    f_material = preset["f_material"]
     f_q = preset["f_qty"]
     f_order_qty = preset.get("f_order_qty", "")
     f_sub = preset.get("f_sub_table", "")
@@ -537,7 +562,8 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
             supplier = "（仕入れ先未設定）"
 
         parent_order_no = extract_val(inner.get(f_ord, "")) if f_ord else ""
-        parent_drawing = extract_val(inner.get(f_drawing, "")) if f_drawing else ""
+        parent_drawing = format_drawing_no(inner.get(f_drawing, "")) if f_drawing else ""
+        parent_material = extract_val(inner.get(f_material, "")) if f_material else ""
         parent_item_name = extract_val(inner.get(f_item_name, "")) if f_item_name else ""
 
         sub_list = inner.get(f_sub, "") if f_sub else ""
@@ -572,15 +598,20 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
 
                     qty = safe_float(get_sub_val(f_q))
                     ord_no = get_sub_val(f_ord) if f_ord and get_sub_val(f_ord) else parent_order_no
-                    drawing_val = get_sub_val(f_drawing) if f_drawing and get_sub_val(f_drawing) else parent_drawing
+                    
+                    raw_dwg = get_sub_val(f_drawing) if f_drawing and get_sub_val(f_drawing) else parent_drawing
+                    drawing_val = format_drawing_no(raw_dwg) if preset.get("app_id") == 36 else extract_val(raw_dwg)
+
+                    mat_val = get_sub_val(f_material) if f_material and get_sub_val(f_material) else parent_material
                     item_val = get_sub_val(f_item_name) if f_item_name and get_sub_val(f_item_name) else parent_item_name
 
                     parsed_list.append({
                         "仕入れ先": supplier,
                         "受注日": order_date.strftime("%Y/%m/%d"),
-                        "注文番号": ord_no,
-                        "図番": drawing_val,
+                        "部番": drawing_val,
                         "品名": item_val,
+                        "材質": mat_val,
+                        "注文番号": ord_no,
                         "受注数量": ord_qty_val,
                         "数量": qty,
                         "状態": "未納（納品日未入力）",
@@ -603,9 +634,10 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
             parsed_list.append({
                 "仕入れ先": supplier,
                 "受注日": order_date.strftime("%Y/%m/%d"),
-                "注文番号": parent_order_no,
-                "図番": parent_drawing,
+                "部番": parent_drawing,
                 "品名": parent_item_name,
+                "材質": parent_material,
+                "注文番号": parent_order_no,
                 "受注数量": ord_qty_val,
                 "数量": qty,
                 "状態": "未納（納品日未入力）",
@@ -709,7 +741,7 @@ def generate_period_invoice_pdf(
     p.setFillColor(colors.white)
     p.setFont(FONT_NAME, 9)
     p.drawString(45, table_y - 14, "納品日")
-    p.drawString(100, table_y - 14, "注文番号 / 図番")
+    p.drawString(100, table_y - 14, "部番 / 図面番号")
     p.drawString(210, table_y - 14, "品名 / 材質")
     p.drawString(380, table_y - 14, "数量")
     p.drawString(430, table_y - 14, "単価")
@@ -724,12 +756,12 @@ def generate_period_invoice_pdf(
             break
         p.drawString(45, current_y, item["納品日"])
 
-        ord_draw = []
+        dwg_ord = []
+        if item["部番"]:
+            dwg_ord.append(item["部番"])
         if item["注文番号"]:
-            ord_draw.append(item["注文番号"])
-        if item["図番"]:
-            ord_draw.append(f"({item['図番']})")
-        p.drawString(100, current_y, " ".join(ord_draw))
+            dwg_ord.append(f"({item['注文番号']})")
+        p.drawString(100, current_y, " ".join(dwg_ord))
 
         name_mat = item["品名"]
         if item["材質"]:
