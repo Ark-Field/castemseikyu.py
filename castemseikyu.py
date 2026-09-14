@@ -22,7 +22,7 @@ APP_PRESETS = {
         "f_customer": "field-3",
         "f_date": "field-17_12",      # 納品日
         "f_order_date": "field-2",    # 受注日
-        "f_order_no": "field-9",      # 図面番号（旧: 注文番号 field-10）
+        "f_order_no": "field-9",      # 図面番号
         "f_drawing": "field-17_2",    # 部番（5桁ゼロ埋め対象）
         "f_item_name": "field-6",     # 品名
         "f_material": "field-7",      # 材質
@@ -220,7 +220,6 @@ def format_drawing_no(val):
     s = extract_val(val)
     if not s:
         return ""
-    # 数字のみ抽出して5桁ゼロ埋めを試みる、数字以外が含まれる場合はそのまま返すか調整
     cleaned = "".join([c for c in s if c.isdigit()])
     if cleaned and len(cleaned) <= 5:
         return cleaned.zfill(5)
@@ -230,7 +229,7 @@ def format_drawing_no(val):
 # --------------------------------------------------
 # 5. 集計関数（請求用）
 # --------------------------------------------------
-def filter_and_group_by_customer_pocket(records, start_date, end_date, preset, app_id_val=None):
+def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
     parsed_list = []
 
     f_cust = preset["f_customer"]
@@ -295,7 +294,6 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset, a
 
                     ord_no = get_sub_val(f_ord) if f_ord and get_sub_val(f_ord) else parent_order_no
                     
-                    # 鋳物販売管理(app36)の場合は部番を5桁ゼロ埋め
                     raw_dwg = get_sub_val(f_drawing) if f_drawing and get_sub_val(f_drawing) else parent_drawing
                     drawing_val = format_drawing_no(raw_dwg) if preset.get("app_id") == 36 else extract_val(raw_dwg)
 
@@ -305,10 +303,11 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset, a
                     parsed_list.append({
                         "顧客名": customer,
                         "納品日": delivery_date.strftime("%Y/%m/%d"),
+                        "__sort_date": delivery_date,  # 日付順ソート用
                         "部番": drawing_val,
                         "品名": item_val,
                         "材質": mat_val,
-                        "注文番号": ord_no,
+                        "図面番号": ord_no,
                         "数量": qty,
                         "単価": price,
                         "金額": amount,
@@ -343,10 +342,11 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset, a
                 parsed_list.append({
                     "顧客名": customer,
                     "納品日": delivery_date.strftime("%Y/%m/%d"),
+                    "__sort_date": delivery_date,  # 日付順ソート用
                     "部番": drawing_val,
                     "品名": parent_item_name,
                     "材質": parent_material,
-                    "注文番号": parent_order_no,
+                    "図面番号": parent_order_no,
                     "数量": qty,
                     "単価": price,
                     "金額": amount,
@@ -359,7 +359,10 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset, a
 
     customer_invoices = {}
     for customer, group in df.groupby("顧客名"):
-        items = group.to_dict(orient="records")
+        # 1日〜31日の日付順（昇順）にソート
+        group_sorted = group.sort_values(by="__sort_date", ascending=True)
+        items = group_sorted.drop(columns=["__sort_date"]).to_dict(orient="records")
+        
         subtotal_ex_tax = sum(item["金額"] for item in items)
         tax_amount = subtotal_ex_tax * 0.10
         total_inc_tax = subtotal_ex_tax + tax_amount
@@ -452,10 +455,11 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
                     parsed_list.append({
                         "仕入れ先": supplier,
                         "納品日": delivery_date.strftime("%Y/%m/%d"),
+                        "__sort_date": delivery_date,  # 日付順ソート用
                         "部番": drawing_val,
                         "品名": item_val,
                         "材質": mat_val,
-                        "注文番号": ord_no,
+                        "図面番号": ord_no,
                         "数量": qty,
                         "仕入単価": cost_price,
                         "仕入金額": cost_amount,
@@ -490,10 +494,11 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
                 parsed_list.append({
                     "仕入れ先": supplier,
                     "納品日": delivery_date.strftime("%Y/%m/%d"),
+                    "__sort_date": delivery_date,  # 日付順ソート用
                     "部番": drawing_val,
                     "品名": parent_item_name,
                     "材質": parent_material,
-                    "注文番号": parent_order_no,
+                    "図面番号": parent_order_no,
                     "数量": qty,
                     "仕入単価": cost_price,
                     "仕入金額": cost_amount,
@@ -506,7 +511,10 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
 
     supplier_ledgers = {}
     for supplier, group in df.groupby("仕入れ先"):
-        items = group.to_dict(orient="records")
+        # 日付順（昇順）にソート
+        group_sorted = group.sort_values(by="__sort_date", ascending=True)
+        items = group_sorted.drop(columns=["__sort_date"]).to_dict(orient="records")
+        
         total_cost = sum(item["仕入金額"] for item in items)
 
         supplier_ledgers[supplier] = {
@@ -519,7 +527,7 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
 
 
 # --------------------------------------------------
-# 5.3 集計関数（未納アラート用）
+# 5.3 集計関数（未納アラート用・受注日順ソート）
 # --------------------------------------------------
 def filter_unfulfilled_orders(records, start_date, end_date, preset):
     parsed_list = []
@@ -608,10 +616,11 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
                     parsed_list.append({
                         "仕入れ先": supplier,
                         "受注日": order_date.strftime("%Y/%m/%d"),
+                        "__sort_date": order_date,  # 受注日順ソート用
                         "部番": drawing_val,
                         "品名": item_val,
                         "材質": mat_val,
-                        "注文番号": ord_no,
+                        "図面番号": ord_no,
                         "受注数量": ord_qty_val,
                         "数量": qty,
                         "状態": "未納（納品日未入力）",
@@ -634,10 +643,11 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
             parsed_list.append({
                 "仕入れ先": supplier,
                 "受注日": order_date.strftime("%Y/%m/%d"),
+                "__sort_date": order_date,  # 受注日順ソート用
                 "部番": parent_drawing,
                 "品名": parent_item_name,
                 "材質": parent_material,
-                "注文番号": parent_order_no,
+                "図面番号": parent_order_no,
                 "受注数量": ord_qty_val,
                 "数量": qty,
                 "状態": "未納（納品日未入力）",
@@ -650,7 +660,10 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
 
     unfulfilled_dict = {}
     for supplier, group in df.groupby("仕入れ先"):
-        items = group.to_dict(orient="records")
+        # 受注日の昇順にソート
+        group_sorted = group.sort_values(by="__sort_date", ascending=True)
+        items = group_sorted.drop(columns=["__sort_date"]).to_dict(orient="records")
+        
         unfulfilled_dict[supplier] = {
             "明細": items,
             "件数": len(items),
@@ -759,8 +772,8 @@ def generate_period_invoice_pdf(
         dwg_ord = []
         if item["部番"]:
             dwg_ord.append(item["部番"])
-        if item["注文番号"]:
-            dwg_ord.append(f"({item['注文番号']})")
+        if item["図面番号"]:
+            dwg_ord.append(f"({item['図面番号']})")
         p.drawString(100, current_y, " ".join(dwg_ord))
 
         name_mat = item["品名"]
