@@ -32,7 +32,7 @@ APP_PRESETS = {
         "f_sub_table": "field-17",
         "f_supplier": "field-16",     # 仕入先名
         "f_cost_price": "field-17_14", # 仕入単価
-        "secret_key_name": "app36_api_key", # 対応するシークレットキー名
+        "secret_key_name": "app36_api_key",
     },
     "2. 物販管理": {
         "app_id": 34,
@@ -194,6 +194,29 @@ def fetch_pocket_records(api_key, app_id, start_date=None, end_date=None, preset
 
 
 # --------------------------------------------------
+# 汎用フィールド値抽出ヘルパー
+# --------------------------------------------------
+def extract_val(raw_val):
+    if raw_val is None:
+        return ""
+    if isinstance(raw_val, dict):
+        return str(raw_val.get("value", raw_val.get("name", ""))).strip()
+    elif isinstance(raw_val, list) and len(raw_val) > 0:
+        extracted = []
+        for item in raw_val:
+            if isinstance(item, dict):
+                extracted.append(str(item.get("value", item.get("name", ""))))
+            else:
+                extracted.append(str(item))
+        return " ".join([e for e in extracted if e and e.lower() != "none"])
+    else:
+        val_str = str(raw_val).strip()
+        if val_str.lower() == "none":
+            return ""
+        return val_str
+
+
+# --------------------------------------------------
 # 5. 集計関数（請求用）
 # --------------------------------------------------
 def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
@@ -212,18 +235,14 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
     for r in records:
         inner = r.get("record", r)
 
-        raw_cust = inner.get(f_cust, "")
-        if isinstance(raw_cust, dict):
-            customer = str(raw_cust.get("value", raw_cust.get("name", ""))).strip()
-        elif isinstance(raw_cust, list) and len(raw_cust) > 0:
-            customer = str(raw_cust[0]).strip()
-        else:
-            customer = str(raw_cust).strip()
-
-        if not customer or customer.lower() == "none":
+        customer = extract_val(inner.get(f_cust, ""))
+        if not customer:
             continue
 
-        parent_order_no = str(inner.get(f_ord, "")) if f_ord else ""
+        parent_order_no = extract_val(inner.get(f_ord, "")) if f_ord else ""
+        parent_drawing = extract_val(inner.get(f_drawing, "")) if f_drawing else ""
+        parent_material = extract_val(inner.get(f_material, "")) if f_material else ""
+        parent_item_name = extract_val(inner.get(f_item_name, "")) if f_item_name else ""
 
         sub_list = inner.get(f_sub, "") if f_sub else ""
         if f_sub and isinstance(sub_list, list):
@@ -231,28 +250,22 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
             for i in range(row_count):
                 try:
                     sub_item = sub_list[i]
-                    if isinstance(sub_item, dict):
-                        sub_rec = sub_item.get("record", sub_item)
-                    else:
-                        sub_rec = {}
+                    sub_rec = sub_item.get("record", sub_item) if isinstance(sub_item, dict) else {}
 
                     def get_sub_val(field_key):
                         if not field_key:
                             return ""
                         val = sub_rec.get(field_key)
                         if val is not None and val != "":
-                            return str(val)
+                            return extract_val(val)
 
                         val_container = inner.get(field_key)
                         if isinstance(val_container, list) and len(val_container) > i:
-                            item = val_container[i]
-                            if isinstance(item, dict):
-                                return str(item.get("value", item.get("record", {}).get(field_key, "")))
-                            return str(item)
+                            return extract_val(val_container[i])
                         return ""
 
                     date_str = get_sub_val(f_dt)
-                    if not date_str or date_str.lower() == "none":
+                    if not date_str:
                         continue
 
                     delivery_date = pd.to_datetime(date_str)
@@ -269,14 +282,17 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
                     price = safe_float(get_sub_val(f_p))
                     amount = qty * price
 
-                    ord_no = get_sub_val(f_ord) if f_ord else parent_order_no
+                    ord_no = get_sub_val(f_ord) if f_ord and get_sub_val(f_ord) else parent_order_no
+                    drawing_val = get_sub_val(f_drawing) if f_drawing and get_sub_val(f_drawing) else parent_drawing
+                    mat_val = get_sub_val(f_material) if f_material and get_sub_val(f_material) else parent_material
+                    item_val = get_sub_val(f_item_name) if f_item_name and get_sub_val(f_item_name) else parent_item_name
 
                     parsed_list.append({
                         "顧客名": customer,
                         "納品日": delivery_date.strftime("%Y/%m/%d"),
-                        "図番": get_sub_val(f_drawing) if f_drawing else "",
-                        "品名": get_sub_val(f_item_name),
-                        "材質": get_sub_val(f_material) if f_material else "",
+                        "図番": drawing_val,
+                        "品名": item_val,
+                        "材質": mat_val,
                         "注文番号": ord_no,
                         "数量": qty,
                         "単価": price,
@@ -286,8 +302,8 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
                     continue
         else:
             raw_date_val = inner.get(f_dt)
-            date_str = str(raw_date_val or "")
-            if not date_str or date_str.lower() == "none":
+            date_str = extract_val(raw_date_val)
+            if not date_str:
                 continue
 
             try:
@@ -309,10 +325,10 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
                 parsed_list.append({
                     "顧客名": customer,
                     "納品日": delivery_date.strftime("%Y/%m/%d"),
-                    "図番": str(inner.get(f_drawing, "")) if f_drawing else "",
-                    "品名": str(inner.get(f_item_name, "")),
-                    "材質": str(inner.get(f_material, "")) if f_material else "",
-                    "注文番号": str(inner.get(f_ord, "")) if f_ord else "",
+                    "図番": parent_drawing,
+                    "品名": parent_item_name,
+                    "材質": parent_material,
+                    "注文番号": parent_order_no,
                     "数量": qty,
                     "単価": price,
                     "金額": amount,
@@ -360,18 +376,14 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
     for r in records:
         inner = r.get("record", r)
 
-        raw_supp = inner.get(f_supp, "")
-        if isinstance(raw_supp, dict):
-            supplier = str(raw_supp.get("value", raw_supp.get("name", ""))).strip()
-        elif isinstance(raw_supp, list) and len(raw_supp) > 0:
-            supplier = str(raw_supp[0]).strip()
-        else:
-            supplier = str(raw_supp).strip()
-
-        if not supplier or supplier.lower() == "none":
+        supplier = extract_val(inner.get(f_supp, ""))
+        if not supplier:
             continue
 
-        parent_order_no = str(inner.get(f_ord, "")) if f_ord else ""
+        parent_order_no = extract_val(inner.get(f_ord, "")) if f_ord else ""
+        parent_drawing = extract_val(inner.get(f_drawing, "")) if f_drawing else ""
+        parent_material = extract_val(inner.get(f_material, "")) if f_material else ""
+        parent_item_name = extract_val(inner.get(f_item_name, "")) if f_item_name else ""
 
         sub_list = inner.get(f_sub, "") if f_sub else ""
         if f_sub and isinstance(sub_list, list):
@@ -379,28 +391,22 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
             for i in range(row_count):
                 try:
                     sub_item = sub_list[i]
-                    if isinstance(sub_item, dict):
-                        sub_rec = sub_item.get("record", sub_item)
-                    else:
-                        sub_rec = {}
+                    sub_rec = sub_item.get("record", sub_item) if isinstance(sub_item, dict) else {}
 
                     def get_sub_val(field_key):
                         if not field_key:
                             return ""
                         val = sub_rec.get(field_key)
                         if val is not None and val != "":
-                            return str(val)
+                            return extract_val(val)
 
                         val_container = inner.get(field_key)
                         if isinstance(val_container, list) and len(val_container) > i:
-                            item = val_container[i]
-                            if isinstance(item, dict):
-                                return str(item.get("value", item.get("record", {}).get(field_key, "")))
-                            return str(item)
+                            return extract_val(val_container[i])
                         return ""
 
                     date_str = get_sub_val(f_dt)
-                    if not date_str or date_str.lower() == "none":
+                    if not date_str:
                         continue
 
                     delivery_date = pd.to_datetime(date_str)
@@ -417,15 +423,18 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
                     cost_price = safe_float(get_sub_val(f_cost))
                     cost_amount = qty * cost_price
 
-                    ord_no = get_sub_val(f_ord) if f_ord else parent_order_no
+                    ord_no = get_sub_val(f_ord) if f_ord and get_sub_val(f_ord) else parent_order_no
+                    drawing_val = get_sub_val(f_drawing) if f_drawing and get_sub_val(f_drawing) else parent_drawing
+                    mat_val = get_sub_val(f_material) if f_material and get_sub_val(f_material) else parent_material
+                    item_val = get_sub_val(f_item_name) if f_item_name and get_sub_val(f_item_name) else parent_item_name
 
                     parsed_list.append({
                         "仕入れ先": supplier,
                         "納品日": delivery_date.strftime("%Y/%m/%d"),
                         "注文番号": ord_no,
-                        "図番": get_sub_val(f_drawing) if f_drawing else "",
-                        "品名": get_sub_val(f_item_name),
-                        "材質": get_sub_val(f_material) if f_material else "",
+                        "図番": drawing_val,
+                        "品名": item_val,
+                        "材質": mat_val,
                         "数量": qty,
                         "仕入単価": cost_price,
                         "仕入金額": cost_amount,
@@ -434,8 +443,8 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
                     continue
         else:
             raw_date_val = inner.get(f_dt)
-            date_str = str(raw_date_val or "")
-            if not date_str or date_str.lower() == "none":
+            date_str = extract_val(raw_date_val)
+            if not date_str:
                 continue
 
             try:
@@ -457,10 +466,10 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
                 parsed_list.append({
                     "仕入れ先": supplier,
                     "納品日": delivery_date.strftime("%Y/%m/%d"),
-                    "注文番号": str(inner.get(f_ord, "")) if f_ord else "",
-                    "図番": str(inner.get(f_drawing, "")) if f_drawing else "",
-                    "品名": str(inner.get(f_item_name, "")) if f_item_name else "",
-                    "材質": str(inner.get(f_material, "")) if f_material else "",
+                    "注文番号": parent_order_no,
+                    "図番": parent_drawing,
+                    "品名": parent_item_name,
+                    "材質": parent_material,
                     "数量": qty,
                     "仕入単価": cost_price,
                     "仕入金額": cost_amount,
@@ -511,8 +520,8 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
         inner = r.get("record", r)
 
         raw_order_date = inner.get(f_ord_date, "")
-        order_date_str = str(raw_order_date or "").strip()
-        if not order_date_str or order_date_str.lower() == "none":
+        order_date_str = extract_val(raw_order_date)
+        if not order_date_str:
             continue
 
         try:
@@ -523,18 +532,13 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
         if not (pd.to_datetime(start_date) <= order_date <= pd.to_datetime(end_date)):
             continue
 
-        raw_supp = inner.get(f_supp, "")
-        if isinstance(raw_supp, dict):
-            supplier = str(raw_supp.get("value", raw_supp.get("name", ""))).strip()
-        elif isinstance(raw_supp, list) and len(raw_supp) > 0:
-            supplier = str(raw_supp[0]).strip()
-        else:
-            supplier = str(raw_supp).strip()
-        
-        if not supplier or supplier.lower() == "none":
+        supplier = extract_val(inner.get(f_supp, ""))
+        if not supplier:
             supplier = "（仕入れ先未設定）"
 
-        parent_order_no = str(inner.get(f_ord, "")) if f_ord else ""
+        parent_order_no = extract_val(inner.get(f_ord, "")) if f_ord else ""
+        parent_drawing = extract_val(inner.get(f_drawing, "")) if f_drawing else ""
+        parent_item_name = extract_val(inner.get(f_item_name, "")) if f_item_name else ""
 
         sub_list = inner.get(f_sub, "") if f_sub else ""
         if f_sub and isinstance(sub_list, list):
@@ -542,24 +546,18 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
             for i in range(row_count):
                 try:
                     sub_item = sub_list[i]
-                    if isinstance(sub_item, dict):
-                        sub_rec = sub_item.get("record", sub_item)
-                    else:
-                        sub_rec = {}
+                    sub_rec = sub_item.get("record", sub_item) if isinstance(sub_item, dict) else {}
 
                     def get_sub_val(field_key):
                         if not field_key:
                             return ""
                         val = sub_rec.get(field_key)
                         if val is not None and val != "":
-                            return str(val)
+                            return extract_val(val)
 
                         val_container = inner.get(field_key)
                         if isinstance(val_container, list) and len(val_container) > i:
-                            item = val_container[i]
-                            if isinstance(item, dict):
-                                return str(item.get("value", item.get("record", {}).get(field_key, "")))
-                            return str(item)
+                            return extract_val(val_container[i])
                         return ""
 
                     ord_qty_val = 0.0
@@ -569,18 +567,20 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
                             continue
 
                     delivery_str = get_sub_val(f_dt)
-                    if delivery_str and delivery_str.lower() != "none" and delivery_str.strip() != "":
+                    if delivery_str:
                         continue
 
                     qty = safe_float(get_sub_val(f_q))
-                    ord_no = get_sub_val(f_ord) if f_ord else parent_order_no
+                    ord_no = get_sub_val(f_ord) if f_ord and get_sub_val(f_ord) else parent_order_no
+                    drawing_val = get_sub_val(f_drawing) if f_drawing and get_sub_val(f_drawing) else parent_drawing
+                    item_val = get_sub_val(f_item_name) if f_item_name and get_sub_val(f_item_name) else parent_item_name
 
                     parsed_list.append({
                         "仕入れ先": supplier,
                         "受注日": order_date.strftime("%Y/%m/%d"),
                         "注文番号": ord_no,
-                        "図番": get_sub_val(f_drawing) if f_drawing else "",
-                        "品名": get_sub_val(f_item_name),
+                        "図番": drawing_val,
+                        "品名": item_val,
                         "受注数量": ord_qty_val,
                         "数量": qty,
                         "状態": "未納（納品日未入力）",
@@ -594,8 +594,8 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
                 if ord_qty_val == 0.0:
                     continue
 
-            delivery_str = str(inner.get(f_dt, "") or "").strip()
-            if delivery_str and delivery_str.lower() != "none" and delivery_str != "":
+            delivery_str = extract_val(inner.get(f_dt, ""))
+            if delivery_str:
                 continue
 
             qty = safe_float(inner.get(f_q, 0))
@@ -603,9 +603,9 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
             parsed_list.append({
                 "仕入れ先": supplier,
                 "受注日": order_date.strftime("%Y/%m/%d"),
-                "注文番号": str(inner.get(f_ord, "")) if f_ord else "",
-                "図番": str(inner.get(f_drawing, "")) if f_drawing else "",
-                "品名": str(inner.get(f_item_name, "")) if f_item_name else "",
+                "注文番号": parent_order_no,
+                "図番": parent_drawing,
+                "品名": parent_item_name,
                 "受注数量": ord_qty_val,
                 "数量": qty,
                 "状態": "未納（納品日未入力）",
