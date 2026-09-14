@@ -82,7 +82,6 @@ st.title("🏢 期間請求書 ＆ 📦 仕入れ台帳 ＆ ⚠️ 未納管理�
 # 2. 日本語フォント登録処理（完全対応版）
 # --------------------------------------------------
 def setup_japanese_font():
-    # 1. GitHubリポジトリ内やアプリと同じフォルダにある同梱フォントを最優先で読み込む
     local_font_path = "NotoSansJP-Regular.ttf"
     if os.path.exists(local_font_path):
         try:
@@ -91,7 +90,6 @@ def setup_japanese_font():
         except Exception:
             pass
 
-    # 2. Windows標準フォントを探索
     win_fonts = [
         os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "msgothic.ttc"),
         os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "meiryo.ttc"),
@@ -105,7 +103,6 @@ def setup_japanese_font():
             except Exception:
                 pass
 
-    # 3. 安定したリポジトリからのフォントダウンロード試行
     font_url = "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP-Regular.ttf"
     try:
         urllib.request.urlretrieve(font_url, local_font_path)
@@ -785,18 +782,22 @@ def generate_period_invoice_pdf(
 
 
 # --------------------------------------------------
-# 7. メインUI画面（3タブ切り替え対応）
+# 7. メインUI画面（3タブ切り替え対応・期間自動最新化）
 # --------------------------------------------------
+today_date = date.today()
+first_day_of_current_month = date(today_date.year, today_date.month, 1)
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
     start_date = st.date_input(
-        "対象期間の開始日", date(2017, 6, 1)
+        "対象期間の開始日", value=first_day_of_current_month
     )
 with col2:
-    end_date = st.date_input("対象期間の終了日", date(2017, 6, 30))
+    end_date = st.date_input("対象期間の終了日", value=today_date)
 with col3:
-    target_month_str = st.text_input("請求書表記 / 対象月", "2017年6月分")
+    default_month_str = f"{today_date.year}年{today_date.month}月分"
+    target_month_str = st.text_input("請求書表記 / 対象月", value=default_month_str)
 
 st.markdown("---")
 
@@ -846,7 +847,7 @@ with tab1:
 
     if "customer_invoices" in st.session_state and st.session_state["customer_invoices"]:
         invs = st.session_state["customer_invoices"]
-        t_month = st.session_state.get("target_month_str", "2017年6月分")
+        t_month = st.session_state.get("target_month_str", default_month_str)
         current_remarks = st.session_state.get("ui_remarks", default_remarks)
 
         st.markdown("---")
