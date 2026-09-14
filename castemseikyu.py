@@ -6,12 +6,14 @@ import pandas as pd
 import requests
 import streamlit as st
 
-# ReportLab関連のインポート
+# ReportLab関連のインポート（フローブル構造・複数ページ対応）
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 
 # --------------------------------------------------
 # 0. 3つのテーブル・アプリ別プリセット設定
@@ -303,7 +305,7 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
                     parsed_list.append({
                         "顧客名": customer,
                         "納品日": delivery_date.strftime("%Y/%m/%d"),
-                        "__sort_date": delivery_date,  # 日付順ソート用
+                        "__sort_date": delivery_date,
                         "部番": drawing_val,
                         "品名": item_val,
                         "材質": mat_val,
@@ -342,7 +344,7 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
                 parsed_list.append({
                     "顧客名": customer,
                     "納品日": delivery_date.strftime("%Y/%m/%d"),
-                    "__sort_date": delivery_date,  # 日付順ソート用
+                    "__sort_date": delivery_date,
                     "部番": drawing_val,
                     "品名": parent_item_name,
                     "材質": parent_material,
@@ -359,7 +361,6 @@ def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
 
     customer_invoices = {}
     for customer, group in df.groupby("顧客名"):
-        # 1日〜31日の日付順（昇順）にソート
         group_sorted = group.sort_values(by="__sort_date", ascending=True)
         items = group_sorted.drop(columns=["__sort_date"]).to_dict(orient="records")
         
@@ -455,7 +456,7 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
                     parsed_list.append({
                         "仕入れ先": supplier,
                         "納品日": delivery_date.strftime("%Y/%m/%d"),
-                        "__sort_date": delivery_date,  # 日付順ソート用
+                        "__sort_date": delivery_date,
                         "部番": drawing_val,
                         "品名": item_val,
                         "材質": mat_val,
@@ -494,7 +495,7 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
                 parsed_list.append({
                     "仕入れ先": supplier,
                     "納品日": delivery_date.strftime("%Y/%m/%d"),
-                    "__sort_date": delivery_date,  # 日付順ソート用
+                    "__sort_date": delivery_date,
                     "部番": drawing_val,
                     "品名": parent_item_name,
                     "材質": parent_material,
@@ -511,7 +512,6 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
 
     supplier_ledgers = {}
     for supplier, group in df.groupby("仕入れ先"):
-        # 日付順（昇順）にソート
         group_sorted = group.sort_values(by="__sort_date", ascending=True)
         items = group_sorted.drop(columns=["__sort_date"]).to_dict(orient="records")
         
@@ -527,7 +527,7 @@ def filter_and_group_by_supplier_pocket(records, start_date, end_date, preset):
 
 
 # --------------------------------------------------
-# 5.3 集計関数（未納アラート用・受注日順ソート）
+# 5.3 集計関数（未納アラート用）
 # --------------------------------------------------
 def filter_unfulfilled_orders(records, start_date, end_date, preset):
     parsed_list = []
@@ -616,7 +616,7 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
                     parsed_list.append({
                         "仕入れ先": supplier,
                         "受注日": order_date.strftime("%Y/%m/%d"),
-                        "__sort_date": order_date,  # 受注日順ソート用
+                        "__sort_date": order_date,
                         "部番": drawing_val,
                         "品名": item_val,
                         "材質": mat_val,
@@ -643,7 +643,7 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
             parsed_list.append({
                 "仕入れ先": supplier,
                 "受注日": order_date.strftime("%Y/%m/%d"),
-                "__sort_date": order_date,  # 受注日順ソート用
+                "__sort_date": order_date,
                 "部番": parent_drawing,
                 "品名": parent_item_name,
                 "材質": parent_material,
@@ -660,7 +660,6 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
 
     unfulfilled_dict = {}
     for supplier, group in df.groupby("仕入れ先"):
-        # 受注日の昇順にソート
         group_sorted = group.sort_values(by="__sort_date", ascending=True)
         items = group_sorted.drop(columns=["__sort_date"]).to_dict(orient="records")
         
@@ -673,155 +672,156 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
 
 
 # --------------------------------------------------
-# 6. ブルー基調・A4縦型請求書 PDF生成関数
+# 6. ブルー基調・A4縦型請求書 PDF生成関数（複数ページ・改ページ対応版）
 # --------------------------------------------------
 def generate_period_invoice_pdf(
     customer_name, inv_data, target_month, issuer_info, bank_info, remarks_text
 ):
     buffer = io.BytesIO()
-    p = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
+    
+    # SimpleDocTemplate を使用して複数ページの改ページを自動制御
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=40,
+        rightMargin=40,
+        topMargin=40,
+        bottomMargin=40,
+    )
 
-    PRIMARY_COLOR = colors.HexColor("#1E3A8A")
-    SECONDARY_COLOR = colors.HexColor("#3B82F6")
-    BG_LIGHT = colors.HexColor("#F8FAFC")
-    TEXT_DARK = colors.HexColor("#1E293B")
-    BORDER_COLOR = colors.HexColor("#CBD5E1")
+    styles = getSampleStyleSheet()
+    
+    # 段落用スタイル
+    title_style = ParagraphStyle("Title", fontName=FONT_NAME, fontSize=20, leading=24, textColor=colors.HexColor("#1E3A8A"))
+    sub_style = ParagraphStyle("Sub", fontName=FONT_NAME, fontSize=9, leading=12, textColor=colors.HexColor("#3B82F6"), alignment=2)
+    meta_style = ParagraphStyle("Meta", fontName=FONT_NAME, fontSize=9, leading=13, textColor=colors.HexColor("#1E293B"))
+    issuer_style = ParagraphStyle("Issuer", fontName=FONT_NAME, fontSize=9, leading=13, textColor=colors.HexColor("#1E293B"))
+    
+    th_style = ParagraphStyle("TH", fontName=FONT_NAME, fontSize=8, leading=10, textColor=colors.white, alignment=1)
+    td_date = ParagraphStyle("TDDate", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.HexColor("#1E293B"))
+    td_text = ParagraphStyle("TDText", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.HexColor("#1E293B"))
+    td_right = ParagraphStyle("TDRight", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.HexColor("#1E293B"), alignment=2)
 
     today_str = date.today().strftime("%Y年%m月%d日")
+    elements = []
 
-    p.setFillColor(PRIMARY_COLOR)
-    p.setFont(FONT_NAME, 22)
-    p.drawString(40, height - 45, "御 請 求 書")
+    # --- ヘルパー：ヘッダー部分の構築 ---
+    elements.append(Paragraph("<b>御 請 求 書</b>", title_style))
+    elements.append(Paragraph(f"対象期間: {target_month}", sub_style))
+    elements.append(Spacer(1, 4))
+    
+    # 装飾ライン
+    # (SimpleDocTemplateではTableやSpacerでレイアウトを構築)
 
-    p.setFont(FONT_NAME, 10)
-    p.setFillColor(SECONDARY_COLOR)
-    p.drawRightString(width - 40, height - 43, f"対象期間: {target_month}")
+    # 宛先と発行元情報を横並びテーブルで配置
+    cust_para = Paragraph(f"<b>{customer_name} 御中</b>", ParagraphStyle("Cust", fontName=FONT_NAME, fontSize=12, leading=16, textColor=colors.HexColor("#1E293B")))
+    
+    issuer_lines = f"<b>発行日: {today_str}</b><br/><br/><b>[ 発行元 ]</b><br/>" + issuer_info.replace("\n", "<br/>")
+    issuer_para = Paragraph(issuer_lines, issuer_style)
 
-    p.setStrokeColor(PRIMARY_COLOR)
-    p.setLineWidth(2)
-    p.line(40, height - 53, width - 40, height - 53)
+    top_info_table = Table([[cust_para, issuer_para]], colWidths=[260, 255])
+    top_info_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+    ]))
+    elements.append(top_info_table)
+    elements.append(Spacer(1, 10))
 
-    p.setFillColor(TEXT_DARK)
-    p.setFont(FONT_NAME, 13)
-    p.drawString(40, height - 80, f"{customer_name}  御中")
+    elements.append(Paragraph("下記の通りご請求申し上げます。", meta_style))
+    elements.append(Spacer(1, 6))
 
-    p.setFont(FONT_NAME, 9)
-    p.drawRightString(width - 40, height - 70, f"発行日: {today_str}")
+    # ご請求金額合計ボックス
+    total_inc_yen = f"￥{inv_data['税込合計']:,}-"
+    tax_ex_yen = f"￥{inv_data['税別小計']:,}-"
+    tax_yen = f"￥{inv_data['消費税']:,}-"
 
-    y_issuer = height - 85
-    p.setFillColor(PRIMARY_COLOR)
-    p.setFont(FONT_NAME, 10)
-    p.drawString(width - 240, y_issuer, "[ 発行元 ]")
-    p.setFillColor(TEXT_DARK)
-    p.setFont(FONT_NAME, 9.5)
-    for line in issuer_info.split("\n"):
-        y_issuer -= 14
-        p.drawString(width - 240, y_issuer, line)
+    box_data = [
+        [Paragraph("<b>ご請求金額合計（税込）</b>", ParagraphStyle("BT1", fontName=FONT_NAME, fontSize=9, leading=12, textColor=colors.HexColor("#1E293B"))),
+         Paragraph(f"（税別金額: {tax_ex_yen}）", ParagraphStyle("BT2", fontName=FONT_NAME, fontSize=8.5, leading=11, textColor=colors.HexColor("#1E293B"), alignment=2))],
+        [Paragraph(f"<b><font size=18 color='#1E3A8A'>{total_inc_yen}</font></b>", ParagraphStyle("BT3", fontName=FONT_NAME, fontSize=18, leading=22)),
+         Paragraph(f"（消費税10%: {tax_yen}）", ParagraphStyle("BT4", fontName=FONT_NAME, fontSize=8.5, leading=11, textColor=colors.HexColor("#1E293B"), alignment=2))]
+    ]
+    box_table = Table(box_data, colWidths=[280, 235])
+    box_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#1E3A8A")),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING', (0,0), (-1,-1), 10),
+        ('RIGHTPADDING', (0,0), (-1,-1), 10),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+    elements.append(box_table)
+    elements.append(Spacer(1, 15))
 
-    p.setFont(FONT_NAME, 10)
-    p.drawString(40, height - 128, "下記の通りご請求申し上げます。")
-
-    box_y = height - 195
-    box_h = 55
-    p.setFillColor(BG_LIGHT)
-    p.setStrokeColor(PRIMARY_COLOR)
-    p.setLineWidth(1)
-    p.rect(40, box_y, width - 80, box_h, fill=1, stroke=1)
-
-    p.setFillColor(TEXT_DARK)
-    p.setFont(FONT_NAME, 9)
-    p.drawString(55, box_y + 35, "ご請求金額合計（税込）")
-
-    total_inc_str = f"￥{inv_data['税込合計']:,}-"
-    p.setFillColor(PRIMARY_COLOR)
-    p.setFont(FONT_NAME, 21)
-    p.drawString(55, box_y + 8, total_inc_str)
-
-    p.setFont(FONT_NAME, 9)
-    p.setFillColor(TEXT_DARK)
-    p.drawRightString(
-        width - 55, box_y + 35, f"（税別金額: ￥{inv_data['税別小計']:,}-）"
-    )
-    p.drawRightString(
-        width - 55, box_y + 20, f"（消費税10%: ￥{inv_data['消費税']:,}-）"
-    )
-
-    table_y = box_y - 25
-    p.setFillColor(PRIMARY_COLOR)
-    p.rect(40, table_y - 20, width - 80, 20, fill=1, stroke=0)
-
-    p.setFillColor(colors.white)
-    p.setFont(FONT_NAME, 9)
-    p.drawString(45, table_y - 14, "納品日")
-    p.drawString(100, table_y - 14, "部番 / 図面番号")
-    p.drawString(210, table_y - 14, "品名 / 材質")
-    p.drawString(380, table_y - 14, "数量")
-    p.drawString(430, table_y - 14, "単価")
-    p.drawRightString(width - 45, table_y - 14, "金額（税別）")
-
-    current_y = table_y - 35
-    p.setFillColor(TEXT_DARK)
-    p.setFont(FONT_NAME, 8.5)
+    # --- 明細テーブルの構築（複数ページ対応・リピートヘッダー） ---
+    table_data = [[
+        Paragraph("納品日", th_style),
+        Paragraph("部番 / 図面番号", th_style),
+        Paragraph("品名 / 材質", th_style),
+        Paragraph("数量", th_style),
+        Paragraph("単価", th_style),
+        Paragraph("金額（税別）", th_style),
+    ]]
 
     for item in inv_data["明細"]:
-        if current_y < 150:
-            break
-        p.drawString(45, current_y, item["納品日"])
-
         dwg_ord = []
         if item["部番"]:
             dwg_ord.append(item["部番"])
         if item["図面番号"]:
             dwg_ord.append(f"({item['図面番号']})")
-        p.drawString(100, current_y, " ".join(dwg_ord))
-
+        
         name_mat = item["品名"]
         if item["材質"]:
             name_mat += f" [{item['材質']}]"
-        p.drawString(210, current_y, name_mat)
 
-        p.drawString(380, current_y, f"{item['数量']:,}")
-        p.drawString(430, current_y, f"￥{item['単価']:,}")
-        p.drawRightString(width - 45, current_y, f"￥{item['金額']:,}")
+        table_data.append([
+            Paragraph(str(item["納品日"]), td_date),
+            Paragraph(" ".join(dwg_ord), td_text),
+            Paragraph(name_mat, td_text),
+            Paragraph(f"{item['数量']:,}", td_right),
+            Paragraph(f"￥{item['単価']:,}", td_right),
+            Paragraph(f"￥{item['金額']:,}", td_right),
+        ])
 
-        p.setStrokeColor(BORDER_COLOR)
-        p.setLineWidth(0.5)
-        p.line(40, current_y - 4, width - 40, current_y - 4)
-        current_y -= 22
+    # A4幅（515pt幅）に合わせた列幅設定
+    col_widths = [65, 110, 160, 45, 60, 75]
+    
+    details_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    details_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1E3A8A")),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor("#CBD5E1")),
+    ]))
+    elements.append(details_table)
+    elements.append(Spacer(1, 20))
 
-    footer_y = 65
+    # --- フッター（口座情報・備考） ---
+    bank_html = "<b>【お振込先口座】</b><br/>" + bank_info.replace("\n", "<br/>")
+    remarks_html = "<b>【備考】</b><br/>" + remarks_text.replace("\n", "<br/>")
 
-    p.setFillColor(PRIMARY_COLOR)
-    p.setFont(FONT_NAME, 9)
-    p.drawString(40, footer_y + 45, "【お振込先口座】")
+    bank_para = Paragraph(bank_html, ParagraphStyle("Bank", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.HexColor("#1E293B")))
+    remarks_para = Paragraph(remarks_html, ParagraphStyle("Rem", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.HexColor("#1E293B")))
 
-    p.setFillColor(TEXT_DARK)
-    p.setFont(FONT_NAME, 8.5)
-    y_b = footer_y + 32
-    for line in bank_info.split("\n"):
-        p.drawString(50, y_b, line)
-        y_b -= 11
+    footer_table = Table([[bank_para, remarks_para]], colWidths=[250, 265])
+    footer_table.setStyle(TableStyle([
+        ('BACKGROUND', (1, 0), (1, 0), colors.HexColor("#F8FAFC")),
+        ('BOX', (1, 0), (1, 0), 0.5, colors.HexColor("#CBD5E1")),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(footer_table)
 
-    p.setFillColor(PRIMARY_COLOR)
-    p.setFont(FONT_NAME, 9)
-    p.drawString(width / 2 + 10, footer_y + 45, "【備考】")
-
-    p.setStrokeColor(BORDER_COLOR)
-    p.setFillColor(BG_LIGHT)
-    p.rect(
-        width / 2 + 10, footer_y - 10, width / 2 - 50, 52, fill=1, stroke=1
-    )
-
-    p.setFillColor(TEXT_DARK)
-    p.setFont(FONT_NAME, 8.5)
-    y_rem = footer_y + 30
-    for line in remarks_text.split("\n"):
-        p.drawString(width / 2 + 18, y_rem, line)
-        y_rem -= 11
-
-    p.showPage()
-    p.save()
+    # ドキュメント構築（自動改ページ実行）
+    doc.build(elements)
     buffer.seek(0)
     return buffer
 
