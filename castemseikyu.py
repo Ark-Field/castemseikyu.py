@@ -1,4 +1,4 @@
-import datetime
+from datetime import date, datetime, timedelta
 import io
 import os
 import urllib.request
@@ -79,24 +79,10 @@ st.title("🏢 期間請求書 ＆ 📦 仕入れ台帳 ＆ ⚠️ 未納管理�
 
 
 # --------------------------------------------------
-# 2. 日本語フォント登録処理（エラー完全対策版）
+# 2. 日本語フォント登録処理（完全対応版）
 # --------------------------------------------------
 def setup_japanese_font():
-    # 1. Windows標準フォントを優先探索
-    win_fonts = [
-        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "msgothic.ttc"),
-        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "meiryo.ttc"),
-        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "YuGothM.ttc"),
-    ]
-    for font_path in win_fonts:
-        if os.path.exists(font_path):
-            try:
-                pdfmetrics.registerFont(TTFont("JPFont", font_path))
-                return "JPFont"
-            except Exception:
-                pass
-
-    # 2. ローカルにあるフォントファイルの確認
+    # 1. GitHubリポジトリ内やアプリと同じフォルダにある同梱フォントを最優先で読み込む
     local_font_path = "NotoSansJP-Regular.ttf"
     if os.path.exists(local_font_path):
         try:
@@ -105,7 +91,21 @@ def setup_japanese_font():
         except Exception:
             pass
 
-    # 3. 安定したリポジトリからのフォントダウンロード試行（失敗しても絶対に止めない）
+    # 2. Windows標準フォントを探索
+    win_fonts = [
+        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "msgothic.ttc"),
+        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "meiryo.ttc"),
+        os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "Fonts", "YuGothM.ttc"),
+    ]
+    for font_path in win_fonts:
+        if os.path.exists(font_path):
+            try:
+                pdfmetrics.registerFont(TTFont("JPFont", font_path, subfontIndex=0))
+                return "JPFont"
+            except Exception:
+                pass
+
+    # 3. 安定したリポジトリからのフォントダウンロード試行
     font_url = "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP-Regular.ttf"
     try:
         urllib.request.urlretrieve(font_url, local_font_path)
@@ -115,9 +115,7 @@ def setup_japanese_font():
     except Exception:
         pass
 
-    # 4. すべてダメな場合は標準フォント（Helvetica）にフォールバックしてクラッシュを防ぐ
     return "Helvetica"
-
 
 FONT_NAME = setup_japanese_font()
 
@@ -131,7 +129,6 @@ selected_preset_name = st.sidebar.selectbox(
 )
 current_preset = APP_PRESETS[selected_preset_name]
 
-# 選択されたアプリに応じたAPIキーを自動取得（個別キーがなければ共通キーフォールバック）
 key_name = current_preset["secret_key_name"]
 default_api_key = st.secrets.get(key_name, st.secrets.get("pockets_api_key", ""))
 
@@ -649,7 +646,7 @@ def generate_period_invoice_pdf(
     TEXT_DARK = colors.HexColor("#1E293B")
     BORDER_COLOR = colors.HexColor("#CBD5E1")
 
-    today_str = datetime.date.today().strftime("%Y年%m月%d日")
+    today_str = date.today().strftime("%Y年%m月%d日")
 
     p.setFillColor(PRIMARY_COLOR)
     p.setFont(FONT_NAME, 22)
@@ -794,10 +791,10 @@ col1, col2, col3 = st.columns(3)
 
 with col1:
     start_date = st.date_input(
-        "対象期間の開始日", datetime.date(2017, 6, 1)
+        "対象期間の開始日", date(2017, 6, 1)
     )
 with col2:
-    end_date = st.date_input("対象期間の終了日", datetime.date(2017, 6, 30))
+    end_date = st.date_input("対象期間の終了日", date(2017, 6, 30))
 with col3:
     target_month_str = st.text_input("請求書表記 / 対象月", "2017年6月分")
 
