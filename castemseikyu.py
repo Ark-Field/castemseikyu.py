@@ -672,14 +672,43 @@ def filter_unfulfilled_orders(records, start_date, end_date, preset):
 
 
 # --------------------------------------------------
-# 6. ブルー基調・A4縦型請求書 PDF生成関数（複数ページ・改ページ対応版）
+# 6. 総ページ数自動挿入用カスタムCanvas
+# --------------------------------------------------
+class NumberedCanvas(canvas.Canvas):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_page_number(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_page_number(self, page_count):
+        self.saveState()
+        self.setFont(FONT_NAME, 8.5)
+        self.setFillColor(colors.HexColor("#1E293B"))
+        page_text = f"{self._pageNumber} / {page_count}"
+        # A4縦の幅(595.27)の中央に描画
+        self.drawCentredString(595.27 / 2.0, 20, page_text)
+        self.restoreState()
+
+
+# --------------------------------------------------
+# 7. ブルー基調・A4縦型請求書 PDF生成関数（ページ数対応版）
 # --------------------------------------------------
 def generate_period_invoice_pdf(
     customer_name, inv_data, target_month, issuer_info, bank_info, remarks_text
 ):
     buffer = io.BytesIO()
     
-    # SimpleDocTemplate を使用して複数ページの改ページを自動制御
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
@@ -691,7 +720,6 @@ def generate_period_invoice_pdf(
 
     styles = getSampleStyleSheet()
     
-    # 段落用スタイル
     title_style = ParagraphStyle("Title", fontName=FONT_NAME, fontSize=20, leading=24, textColor=colors.HexColor("#1E3A8A"))
     sub_style = ParagraphStyle("Sub", fontName=FONT_NAME, fontSize=9, leading=12, textColor=colors.HexColor("#3B82F6"), alignment=2)
     meta_style = ParagraphStyle("Meta", fontName=FONT_NAME, fontSize=9, leading=13, textColor=colors.HexColor("#1E293B"))
@@ -705,17 +733,11 @@ def generate_period_invoice_pdf(
     today_str = date.today().strftime("%Y年%m月%d日")
     elements = []
 
-    # --- ヘルパー：ヘッダー部分の構築 ---
     elements.append(Paragraph("<b>御 請 求 書</b>", title_style))
     elements.append(Paragraph(f"対象期間: {target_month}", sub_style))
     elements.append(Spacer(1, 4))
     
-    # 装飾ライン
-    # (SimpleDocTemplateではTableやSpacerでレイアウトを構築)
-
-    # 宛先と発行元情報を横並びテーブルで配置
     cust_para = Paragraph(f"<b>{customer_name} 御中</b>", ParagraphStyle("Cust", fontName=FONT_NAME, fontSize=12, leading=16, textColor=colors.HexColor("#1E293B")))
-    
     issuer_lines = f"<b>発行日: {today_str}</b><br/><br/><b>[ 発行元 ]</b><br/>" + issuer_info.replace("\n", "<br/>")
     issuer_para = Paragraph(issuer_lines, issuer_style)
 
@@ -732,7 +754,6 @@ def generate_period_invoice_pdf(
     elements.append(Paragraph("下記の通りご請求申し上げます。", meta_style))
     elements.append(Spacer(1, 6))
 
-    # ご請求金額合計ボックス
     total_inc_yen = f"￥{inv_data['税込合計']:,}-"
     tax_ex_yen = f"￥{inv_data['税別小計']:,}-"
     tax_yen = f"￥{inv_data['消費税']:,}-"
@@ -756,7 +777,6 @@ def generate_period_invoice_pdf(
     elements.append(box_table)
     elements.append(Spacer(1, 15))
 
-    # --- 明細テーブルの構築（複数ページ対応・リピートヘッダー） ---
     table_data = [[
         Paragraph("納品日", th_style),
         Paragraph("部番 / 図面番号", th_style),
@@ -786,7 +806,6 @@ def generate_period_invoice_pdf(
             Paragraph(f"￥{item['金額']:,}", td_right),
         ])
 
-    # A4幅（515pt幅）に合わせた列幅設定
     col_widths = [65, 110, 160, 45, 60, 75]
     
     details_table = Table(table_data, colWidths=col_widths, repeatRows=1)
@@ -801,7 +820,6 @@ def generate_period_invoice_pdf(
     elements.append(details_table)
     elements.append(Spacer(1, 20))
 
-    # --- フッター（口座情報・備考） ---
     bank_html = "<b>【お振込先口座】</b><br/>" + bank_info.replace("\n", "<br/>")
     remarks_html = "<b>【備考】</b><br/>" + remarks_text.replace("\n", "<br/>")
 
@@ -820,14 +838,14 @@ def generate_period_invoice_pdf(
     ]))
     elements.append(footer_table)
 
-    # ドキュメント構築（自動改ページ実行）
-    doc.build(elements)
+    # NumberedCanvasを使って総ページ数込みのページ番号を自動挿入
+    doc.build(elements, canvasmaker=NumberedCanvas)
     buffer.seek(0)
     return buffer
 
 
 # --------------------------------------------------
-# 7. メインUI画面（3タブ切り替え対応・期間自動最新化）
+# 8. メインUI画面（3タブ切り替え対応・期間自動最新化）
 # --------------------------------------------------
 today_date = date.today()
 first_day_of_current_month = date(today_date.year, today_date.month, 1)
