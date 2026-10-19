@@ -144,7 +144,7 @@ st.sidebar.header("🏢 発行元・振込先・備考設定")
 DEFAULT_ISSUER_TEXT = (
     "株式会社 キャステム \n"
     "〒275-0016 千葉県 習志野市 津田沼 7-18-25\n"
-    "TEL:047-452-9541 fax:047-451-5843\n"
+    "TEL:047-452-9541 FAX:047-451-5843\n"
     "mail: info@castem.info"
 )
 
