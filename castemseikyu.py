@@ -75,9 +75,9 @@ APP_PRESETS = {
 # --------------------------------------------------
 # 1. ページ初期設定
 # --------------------------------------------------
-st.set_page_config(page_title="期間請求書＆仕入れ・未納管理システム", layout="wide")
+st.set_page_config(page_title="期間請求書＆期間納品書＆仕入れ・未納管理", layout="wide")
 
-st.title("🏢 期間請求書 ＆ 📦 仕入れ台帳 ＆ ⚠️ 未納管理システム")
+st.title("🏢 期間請求書 ＆ 📋 期間納品書 ＆ 📦 仕入れ台帳 ＆ ⚠️ 未納管理システム")
 
 
 # --------------------------------------------------
@@ -229,7 +229,7 @@ def format_drawing_no(val):
 
 
 # --------------------------------------------------
-# 5. 集計関数（請求用）
+# 5. 集計関数（請求・納品用共通）
 # --------------------------------------------------
 def filter_and_group_by_customer_pocket(records, start_date, end_date, preset):
     parsed_list = []
@@ -696,13 +696,12 @@ class NumberedCanvas(canvas.Canvas):
         self.setFont(FONT_NAME, 8.5)
         self.setFillColor(colors.HexColor("#1E293B"))
         page_text = f"{self._pageNumber} / {page_count}"
-        # A4縦の幅(595.27)の中央に描画
         self.drawCentredString(595.27 / 2.0, 20, page_text)
         self.restoreState()
 
 
 # --------------------------------------------------
-# 7. ブルー基調・A4縦型請求書 PDF生成関数（ページ数対応版）
+# 7. PDF生成関数（請求書用 ＆ 納品書用）
 # --------------------------------------------------
 def generate_period_invoice_pdf(
     customer_name, inv_data, target_month, issuer_info, bank_info, remarks_text
@@ -838,14 +837,150 @@ def generate_period_invoice_pdf(
     ]))
     elements.append(footer_table)
 
-    # NumberedCanvasを使って総ページ数込みのページ番号を自動挿入
+    doc.build(elements, canvasmaker=NumberedCanvas)
+    buffer.seek(0)
+    return buffer
+
+
+def generate_period_delivery_pdf(
+    customer_name, inv_data, target_month, issuer_info, remarks_text
+):
+    """期間納品書PDF生成関数（請求書をベースにタイトル・文言を納品書用に変更）"""
+    buffer = io.BytesIO()
+    
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=40,
+        rightMargin=40,
+        topMargin=40,
+        bottomMargin=40,
+    )
+
+    title_style = ParagraphStyle("Title", fontName=FONT_NAME, fontSize=20, leading=24, textColor=colors.HexColor("#1E3A8A"))
+    sub_style = ParagraphStyle("Sub", fontName=FONT_NAME, fontSize=9, leading=12, textColor=colors.HexColor("#3B82F6"), alignment=2)
+    meta_style = ParagraphStyle("Meta", fontName=FONT_NAME, fontSize=9, leading=13, textColor=colors.HexColor("#1E293B"))
+    issuer_style = ParagraphStyle("Issuer", fontName=FONT_NAME, fontSize=9, leading=13, textColor=colors.HexColor("#1E293B"))
+    
+    th_style = ParagraphStyle("TH", fontName=FONT_NAME, fontSize=8, leading=10, textColor=colors.white, alignment=1)
+    td_date = ParagraphStyle("TDDate", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.HexColor("#1E293B"))
+    td_text = ParagraphStyle("TDText", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.HexColor("#1E293B"))
+    td_right = ParagraphStyle("TDRight", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.HexColor("#1E293B"), alignment=2)
+
+    today_str = date.today().strftime("%Y年%m月%d日")
+    elements = []
+
+    # ★ タイトルを納品書に変更
+    elements.append(Paragraph("<b>御 納 品 書</b>", title_style))
+    elements.append(Paragraph(f"対象期間: {target_month}", sub_style))
+    elements.append(Spacer(1, 4))
+    
+    cust_para = Paragraph(f"<b>{customer_name} 御中</b>", ParagraphStyle("Cust", fontName=FONT_NAME, fontSize=12, leading=16, textColor=colors.HexColor("#1E293B")))
+    issuer_lines = f"<b>発行日: {today_str}</b><br/><br/><b>[ 発行元 ]</b><br/>" + issuer_info.replace("\n", "<br/>")
+    issuer_para = Paragraph(issuer_lines, issuer_style)
+
+    top_info_table = Table([[cust_para, issuer_para]], colWidths=[260, 255])
+    top_info_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+    ]))
+    elements.append(top_info_table)
+    elements.append(Spacer(1, 10))
+
+    # ★ 文言を納品申し上げますに変更
+    elements.append(Paragraph("下記の通り納品申し上げます。", meta_style))
+    elements.append(Spacer(1, 6))
+
+    total_inc_yen = f"￥{inv_data['税込合計']:,}-"
+    tax_ex_yen = f"￥{inv_data['税別小計']:,}-"
+    tax_yen = f"￥{inv_data['消費税']:,}-"
+
+    box_data = [
+        [Paragraph("<b>納品金額合計（税込）</b>", ParagraphStyle("BT1", fontName=FONT_NAME, fontSize=9, leading=12, textColor=colors.HexColor("#1E293B"))),
+         Paragraph(f"（税別金額: {tax_ex_yen}）", ParagraphStyle("BT2", fontName=FONT_NAME, fontSize=8.5, leading=11, textColor=colors.HexColor("#1E293B"), alignment=2))],
+        [Paragraph(f"<b><font size=18 color='#1E3A8A'>{total_inc_yen}</font></b>", ParagraphStyle("BT3", fontName=FONT_NAME, fontSize=18, leading=22)),
+         Paragraph(f"（消費税10%: {tax_yen}）", ParagraphStyle("BT4", fontName=FONT_NAME, fontSize=8.5, leading=11, textColor=colors.HexColor("#1E293B"), alignment=2))]
+    ]
+    box_table = Table(box_data, colWidths=[280, 235])
+    box_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#1E3A8A")),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('LEFTPADDING', (0,0), (-1,-1), 10),
+        ('RIGHTPADDING', (0,0), (-1,-1), 10),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+    elements.append(box_table)
+    elements.append(Spacer(1, 15))
+
+    table_data = [[
+        Paragraph("納品日", th_style),
+        Paragraph("部番 / 図面番号", th_style),
+        Paragraph("品名 / 材質", th_style),
+        Paragraph("数量", th_style),
+        Paragraph("単価", th_style),
+        Paragraph("金額（税別）", th_style),
+    ]]
+
+    for item in inv_data["明細"]:
+        dwg_ord = []
+        if item["部番"]:
+            dwg_ord.append(item["部番"])
+        if item["図面番号"]:
+            dwg_ord.append(f"({item['図面番号']})")
+        
+        name_mat = item["品名"]
+        if item["材質"]:
+            name_mat += f" [{item['材質']}]"
+
+        table_data.append([
+            Paragraph(str(item["納品日"]), td_date),
+            Paragraph(" ".join(dwg_ord), td_text),
+            Paragraph(name_mat, td_text),
+            Paragraph(f"{item['数量']:,}", td_right),
+            Paragraph(f"￥{item['単価']:,}", td_right),
+            Paragraph(f"￥{item['金額']:,}", td_right),
+        ])
+
+    col_widths = [65, 110, 160, 45, 60, 75]
+    
+    details_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    details_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1E3A8A")),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor("#CBD5E1")),
+    ]))
+    elements.append(details_table)
+    elements.append(Spacer(1, 20))
+
+    remarks_html = "<b>【備考】</b><br/>" + remarks_text.replace("\n", "<br/>")
+    remarks_para = Paragraph(remarks_html, ParagraphStyle("Rem", fontName=FONT_NAME, fontSize=8.5, leading=12, textColor=colors.HexColor("#1E293B")))
+
+    footer_table = Table([[remarks_para]], colWidths=[515])
+    footer_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+        ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(footer_table)
+
     doc.build(elements, canvasmaker=NumberedCanvas)
     buffer.seek(0)
     return buffer
 
 
 # --------------------------------------------------
-# 8. メインUI画面（3タブ切り替え対応・期間自動最新化）
+# 8. メインUI画面（4タブ切り替え対応）
 # --------------------------------------------------
 today_date = date.today()
 first_day_of_current_month = date(today_date.year, today_date.month, 1)
@@ -860,11 +995,11 @@ with col2:
     end_date = st.date_input("対象期間の終了日", value=today_date)
 with col3:
     default_month_str = f"{today_date.year}年{today_date.month}月分"
-    target_month_str = st.text_input("請求書表記 / 対象月", value=default_month_str)
+    target_month_str = st.text_input("帳票表記 / 対象月", value=default_month_str)
 
 st.markdown("---")
 
-tab1, tab2, tab3 = st.tabs(["📄 期間請求書発行", "📦 仕入れ台帳管理", "⚠️ 未納・未完了アラート"])
+tab1, tab2, tab3, tab4 = st.tabs(["📄 期間請求書発行", "📋 期間納品書発行", "📦 仕入れ台帳管理", "⚠️ 未納・未完了アラート"])
 
 # ==========================================
 # タブ 1: 期間請求書発行
@@ -914,7 +1049,7 @@ with tab1:
         current_remarks = st.session_state.get("ui_remarks", default_remarks)
 
         st.markdown("---")
-        st.markdown("### 📊 全会社 集計レポート")
+        st.markdown("### 📊 全会社 集計レポート（請求書）")
 
         total_companies = len(invs)
         total_items_count = sum(data["件数"] for data in invs.values())
@@ -976,9 +1111,116 @@ with tab1:
 
 
 # ==========================================
-# タブ 2: 仕入れ台帳管理
+# タブ 2: 期間納品書発行（新規追加）
 # ==========================================
 with tab2:
+    ui_delivery_remarks = st.text_area(
+        "📝 納品書に記載する備考欄",
+        value="いつもありがとうございます。\n上記のとおり納品いたしましたのでご確認よろしくお願い申し上げます。",
+        height=80,
+        key="delivery_remarks",
+    )
+
+    if st.button(
+        f"「{selected_preset_name}」から納品データを取得・作成する",
+        type="primary",
+        key="btn_delivery",
+    ):
+        if not api_key:
+            st.error("👈 左側のサイドバーにAPIキーを設定してください。")
+        else:
+            with st.spinner(f"「{selected_preset_name}」のデータを取得中..."):
+                res_data = fetch_pocket_records(
+                    api_key, app_id=current_preset["app_id"],
+                    start_date=start_date, end_date=end_date, preset=current_preset, mode="invoice"
+                )
+
+                if res_data:
+                    records = res_data.get("records", res_data.get("data", []))
+                    customer_deliveries = filter_and_group_by_customer_pocket(
+                        records, start_date, end_date, current_preset
+                    )
+
+                    if customer_deliveries:
+                        st.session_state["customer_deliveries"] = customer_deliveries
+                        st.session_state["target_month_str"] = target_month_str
+                        st.session_state["ui_delivery_remarks"] = ui_delivery_remarks
+                        st.success(
+                            f"集計完了！ {len(customer_deliveries)} 社分の納品データを作成しました。"
+                        )
+                    else:
+                        st.session_state["customer_deliveries"] = None
+                        st.warning("指定期間に該当する納品データが見つかりませんでした。")
+
+    if "customer_deliveries" in st.session_state and st.session_state["customer_deliveries"]:
+        dels = st.session_state["customer_deliveries"]
+        t_month = st.session_state.get("target_month_str", default_month_str)
+        current_del_remarks = st.session_state.get("ui_delivery_remarks", "")
+
+        st.markdown("---")
+        st.markdown("### 📊 全会社 集計レポート（納品書）")
+
+        total_d_companies = len(dels)
+        total_d_items_count = sum(data["件数"] for data in dels.values())
+        grand_d_subtotal = sum(data["税別小計"] for data in dels.values())
+        grand_d_total = sum(data["税込合計"] for data in dels.values())
+
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("納品先企業数", f"{total_d_companies} 社")
+        d2.metric("総明細行数", f"{total_d_items_count} 件")
+        d3.metric("合計金額（税別）", f"￥{grand_d_subtotal:,}")
+        d4.metric("合計金額（税込）", f"￥{grand_d_total:,}")
+
+        summary_d_list = [
+            {
+                "顧客名": cust_name,
+                "明細件数": d["件数"],
+                "税別小計": f"￥{d['税別小計']:,}",
+                "消費税(10%)": f"￥{d['消費税']:,}",
+                "税込合計": f"￥{d['税込合計']:,}",
+            }
+            for cust_name, d in dels.items()
+        ]
+        st.dataframe(pd.DataFrame(summary_d_list), use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### 📋 顧客別 期間納品書 PDFダウンロード")
+
+        cols_d = st.columns(2)
+        for idx, (customer_name, del_data) in enumerate(dels.items()):
+            sub_ex = del_data["税別小計"]
+            total_inc = del_data["税込合計"]
+            count = del_data["件数"]
+
+            pdf_buffer_del = generate_period_delivery_pdf(
+                customer_name,
+                del_data,
+                t_month,
+                issuer_info,
+                current_del_remarks,
+            )
+
+            with cols_d[idx % 2]:
+                with st.expander(
+                    f"🏢 {customer_name} （納品額: ￥{total_inc:,} / 明細: {count}件）",
+                    expanded=True,
+                ):
+                    st.write(f"**税別小計:** ￥{sub_ex:,} ｜ **税込合計:** ￥{total_inc:,}")
+                    st.dataframe(pd.DataFrame(del_data["明細"]), use_container_width=True)
+
+                    st.download_button(
+                        label=f"⬇️ {customer_name} の納品書PDFをダウンロード",
+                        data=pdf_buffer_del,
+                        file_name=f"納品書_{customer_name}_{t_month}.pdf",
+                        mime="application/pdf",
+                        key=f"dl_pdf_del_{customer_name}_{idx}",
+                    )
+
+
+# ==========================================
+# タブ 3: 仕入れ台帳管理
+# ==========================================
+with tab3:
     st.markdown("### 📦 仕入れ台帳・CSV出力")
     st.write("指定された期間のデータを取得し、仕入先ごとに「数量 × 仕入れ単価」で計算した仕入れ台帳を表示・CSV出力します。")
 
@@ -1053,77 +1295,10 @@ with tab2:
 
 
 # ==========================================
-# タブ 3: 未納・未完了アラート管理
+# タブ 4: 未納・未完了アラート管理
 # ==========================================
-with tab3:
+with tab4:
     st.markdown("### ⚠️ 未納・未完了アラート（受注日ベース）")
     st.write("指定された期間内に**受注**されたものの、**納品日がまだ入力されていない（未納）**案件を仕入れ先ごとに抽出し、リスト化します。")
 
-    if st.button(
-        f"「{selected_preset_name}」から未納データをチェックする",
-        type="primary",
-        key="btn_alert",
-    ):
-        if not api_key:
-            st.error("👈 左側のサイドバーにAPIキーを設定してください。")
-        else:
-            with st.spinner(f"「{selected_preset_name}」のデータを取得中..."):
-                res_data = fetch_pocket_records(
-                    api_key, app_id=current_preset["app_id"],
-                    start_date=start_date, end_date=end_date, preset=current_preset, mode="alert"
-                )
-
-                if res_data:
-                    records = res_data.get("records", res_data.get("data", []))
-                    unfulfilled_dict = filter_unfulfilled_orders(
-                        records, start_date, end_date, current_preset
-                    )
-
-                    if unfulfilled_dict:
-                        st.session_state["unfulfilled_dict"] = unfulfilled_dict
-                        st.success(
-                            f"チェック完了！ {len(unfulfilled_dict)} 社の仕入れ先に未納・未完了の案件があります。"
-                        )
-                    else:
-                        st.session_state["unfulfilled_dict"] = None
-                        st.success("素晴らしい！指定期間内の受注で未納（納品日未入力）の案件はありませんでした。")
-
-    if "unfulfilled_dict" in st.session_state and st.session_state["unfulfilled_dict"]:
-        unful_data = st.session_state["unfulfilled_dict"]
-
-        st.markdown("---")
-        st.markdown("### 🚨 未納・未完了 件数サマリー")
-
-        total_unful_suppliers = len(unful_data)
-        total_unful_items = sum(d["件数"] for d in unful_data.values())
-
-        u1, u2 = st.columns(2)
-        u1.metric("未納がある仕入先数", f"{total_unful_suppliers} 社")
-        u2.metric("未納の総件数", f"{total_unful_items} 件")
-
-        unful_summary_list = [
-            {
-                "仕入れ先": supp_name,
-                "未納件数": d["件数"],
-            }
-            for supp_name, d in unful_data.items()
-        ]
-        st.dataframe(pd.DataFrame(unful_summary_list), use_container_width=True)
-
-        st.markdown("---")
-        st.markdown("### 📥 仕入れ先別 未納リスト（送付用）CSVダウンロード")
-        st.write("各仕入れ先ごとに、未納となっている案件のリストをCSVでダウンロードできます。そのままメール添付等によるリスト送付にご活用いただけます。")
-
-        for supp_name, supp_info in unful_data.items():
-            df_unful = pd.DataFrame(supp_info["明細"])
-            csv_unful_data = df_unful.to_csv(index=False).encode("utf-8-sig")
-
-            with st.expander(f"⚠️ {supp_name} （未納件数: {supp_info['件数']}件）", expanded=True):
-                st.dataframe(df_unful, use_container_width=True)
-                st.download_button(
-                    label=f"⬇️ {supp_name} の未納リストCSVをダウンロード",
-                    data=csv_unful_data,
-                    file_name=f"未納リスト_{supp_name}_{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                    key=f"dl_csv_unful_{supp_name}",
-                )
+    if st
